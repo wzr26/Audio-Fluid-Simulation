@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Reactive Water · H₂O</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#050d18;--border:#0d1e30;
+  --cyan:#00bcd4;--cyan-dim:#006b7a;
+  --text:#4a8fa8;--muted:#1a3a4a;
+}
+html,body{
+  width:100%;height:100%;
+  background:var(--bg);color:var(--text);
+  font-family:'Space Mono',monospace;
+  overflow:hidden;display:flex;flex-direction:column;user-select:none;
+}
+header{
+  flex-shrink:0;height:54px;
+  display:flex;align-items:center;padding:0 28px;
+  border-bottom:1px solid var(--border);gap:0;
+}
+.logo{
+  font-size:.75rem;font-weight:700;letter-spacing:.25em;
+  color:var(--cyan);text-transform:uppercase;margin-right:auto;
+}
+.logo span{color:var(--text);margin:0 6px}
+.stat-group{display:flex;gap:36px}
+.stat{display:flex;flex-direction:column;align-items:center;gap:2px}
+.stat-label{font-size:.5rem;letter-spacing:.22em;text-transform:uppercase;opacity:.55}
+.stat-value{font-size:.8rem;font-weight:700;letter-spacing:.1em;color:var(--cyan)}
+#stage{flex:1;position:relative;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+.overlay{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;pointer-events:none;transition:opacity .6s;z-index:4;
+}
+.overlay.gone{opacity:0}
+.drop-icon{
+  width:64px;height:64px;border-radius:50%;
+  border:1px solid var(--cyan-dim);
+  display:flex;align-items:center;justify-content:center;font-size:1.5rem;
+  animation:breathe 2.8s ease-in-out infinite;
+}
+@keyframes breathe{
+  0%,100%{box-shadow:0 0 0 0 rgba(0,188,212,.15)}
+  50%{box-shadow:0 0 0 16px rgba(0,188,212,0)}
+}
+.overlay h2{font-size:.7rem;letter-spacing:.3em;text-transform:uppercase;color:var(--cyan);font-weight:700}
+.overlay p{font-size:.6rem;letter-spacing:.1em;color:var(--text);text-align:center;line-height:2.1}
+footer{
+  flex-shrink:0;height:64px;
+  border-top:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+}
+.mic-btn{
+  font-family:'Space Mono',monospace;
+  font-size:.62rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--cyan);background:transparent;
+  border:1px solid var(--cyan-dim);padding:10px 28px;cursor:pointer;
+  display:flex;align-items:center;gap:10px;
+  transition:border-color .2s,box-shadow .2s,color .2s,background .2s;
+  white-space:nowrap;
+}
+.mic-btn:hover{
+  border-color:var(--cyan);
+  box-shadow:0 0 18px rgba(0,188,212,.25),inset 0 0 14px rgba(0,188,212,.06);
+}
+.mic-btn.active{
+  color:#050d18;background:var(--cyan);border-color:var(--cyan);
+  box-shadow:0 0 24px rgba(0,229,255,.5);
+}
+.mic-dot{
+  width:7px;height:7px;border-radius:50%;background:var(--cyan);transition:background .2s;
+}
+.mic-btn.active .mic-dot{background:#050d18;animation:blink 1s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">H<sub style="font-size:.55em">2</sub>O <span>·</span> REACTIVE WATER</div>
+  <div class="stat-group">
+    <div class="stat"><span class="stat-label">Frequency</span><span class="stat-value" id="s-freq">— Hz</span></div>
+    <div class="stat"><span class="stat-label">Amplitude</span><span class="stat-value" id="s-amp">0.00</span></div>
+    <div class="stat"><span class="stat-label">Drops</span><span class="stat-value" id="s-drops">0</span></div>
+    <div class="stat"><span class="stat-label">Band</span><span class="stat-value" id="s-band">—</span></div>
+  </div>
+</header>
+
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div class="overlay" id="overlay">
+    <div class="drop-icon">◈</div>
+    <h2>Audio Reactive Water</h2>
+    <p>Click the button below to begin<br>Allow Microphone access<br>Talk, sing, clap — the waves will react</p>
+  </div>
+</div>
+
+<footer>
+  <button class="mic-btn" id="mic-btn" onclick="toggleMic()">
+    <span class="mic-dot"></span>► START MICROPHONE
+  </button>
+</footer>
+
+<script>
+const TENSION = 0.028;
+const DAMPING  = 0.988;
+const SPREAD   = 0.22;
+const N        = 240;
+
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const stage  = document.getElementById('stage');
+
+let W, H, waterY;
+let col_h, col_v;
+
+function initWater() {
+  W = canvas.width  = stage.clientWidth;
+  H = canvas.height = stage.clientHeight;
+  waterY = H * 0.52;
+  col_h  = new Float32Array(N);
+  col_v  = new Float32Array(N);
+}
+
+const lDelta = new Float32Array(N);
+const rDelta = new Float32Array(N);
+
+function stepWater() {
+  for (let i = 0; i < N; i++) {
+    col_v[i] += -TENSION * col_h[i];
+    col_v[i] *= DAMPING;
+    col_h[i] += col_v[i];
+  }
+  for (let pass = 0; pass < 8; pass++) {
+    for (let i = 0; i < N; i++) {
+      if (i > 0)   { lDelta[i] = SPREAD*(col_h[i]-col_h[i-1]); col_v[i-1] += lDelta[i]; }
+      if (i < N-1) { rDelta[i] = SPREAD*(col_h[i]-col_h[i+1]); col_v[i+1] += rDelta[i]; }
+    }
+    for (let i = 0; i < N; i++) {
+      if (i > 0)   col_h[i-1] += lDelta[i];
+      if (i < N-1) col_h[i+1] += rDelta[i];
+    }
+  }
+}
+
+function splash(xFrac, power) {
+  let ci  = Math.round(xFrac * (N-1));
+  let rad = Math.max(2, Math.floor(power * 0.5 + 3));
+  for (let i = Math.max(0,ci-rad); i <= Math.min(N-1,ci+rad); i++) {
+    let f = 1 - Math.abs(i-ci)/(rad+1);
+    col_h[i] += power * f * f;
+    col_v[i]  = -power * 0.35 * f;
+  }
+}
+
+let drops = [], particles = [], dropCount = 0;
+
+function addDrop(xFrac, power) {
+  drops.push({
+    x: xFrac * W,
+    y: waterY - 40 - power * 2.5,
+    vy: 0,
+    r: 3 + power * 0.35,
+    xFrac, power, splashed: false
+  });
+}
+
+function spawnParticles(x, power) {
+  let n = Math.floor(power * 2.5 + 6);
+  for (let i = 0; i < n; i++) {
+    let a = -Math.PI/2 + (Math.random()-.5)*Math.PI*1.3;
+    let s = 3 + Math.random() * power;
+    particles.push({ x, y: waterY, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+                     life:1, r:1.5+Math.random()*3, hue:190+Math.random()*25 });
+  }
+}
+
+function updateDrops() {
+  let next = [];
+  for (let d of drops) {
+    d.vy += 0.55; d.y += d.vy;
+    let ci = Math.max(0, Math.min(N-1, Math.round(d.xFrac*(N-1))));
+    let sy = waterY + col_h[ci];
+    if (!d.splashed && d.y >= sy) {
+      d.splashed = true;
+      splash(d.xFrac, d.power);
+      spawnParticles(d.x, d.power);
+      dropCount++;
+      document.getElementById('s-drops').textContent = dropCount;
+    } else if (!d.splashed) {
+      next.push(d);
+    }
+  }
+  drops = next;
+}
+
+function updateParticles() {
+  particles = particles.filter(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.vx *= 0.97; p.life -= 0.022;
+    return p.life > 0 && p.y < H;
+  });
+}
+
+let audioCtx, analyser, micStream, freqData;
+let micActive = false;
+let domFreq = 0, amp = 0, lastAmp = 0, dropTimer = 0;
+
+async function toggleMic() {
+  if (micActive) { stopMic(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.75;
+    audioCtx.createMediaStreamSource(stream).connect(analyser);
+    freqData  = new Uint8Array(analyser.frequencyBinCount);
+    micStream = stream;
+    micActive = true;
+    let btn = document.getElementById('mic-btn');
+    btn.classList.add('active');
+    btn.innerHTML = '<span class="mic-dot"></span>■ STOP MIC';
+    document.getElementById('overlay').classList.add('gone');
+  } catch(e) {
+    alert('Cannot access microphone:\n' + e.message);
+  }
+}
+
+function stopMic() {
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (audioCtx)  audioCtx.close();
+  micActive = false;
+  let btn = document.getElementById('mic-btn');
+  btn.classList.remove('active');
+  btn.innerHTML = '<span class="mic-dot"></span>► START MICROPHONE';
+}
+
+function processAudio() {
+  if (!micActive || !analyser) return;
+  analyser.getByteFrequencyData(freqData);
+
+  let binCount = analyser.frequencyBinCount;
+  let sr = audioCtx.sampleRate;
+
+  let mx = 0, mxi = 0;
+  for (let i = 1; i < binCount; i++) { if (freqData[i] > mx) { mx = freqData[i]; mxi = i; } }
+  domFreq = Math.round(mxi * sr / 2048);
+
+  let sum = 0;
+  for (let i = 0; i < binCount; i++) sum += freqData[i] * freqData[i];
+  amp = Math.sqrt(sum / binCount) / 255;
+
+  let band = domFreq < 300 ? 'BASS' : domFreq < 3000 ? 'MID' : 'TREBLE';
+  document.getElementById('s-freq').textContent = domFreq + ' Hz';
+  document.getElementById('s-amp').textContent  = amp.toFixed(2);
+  document.getElementById('s-band').textContent = band;
+
+  let freqNorm = Math.min(domFreq / 5000, 1);
+  let power = (amp * 0.75 + freqNorm * 0.25) * 90 + 5;
+
+  dropTimer--;
+  let rise = amp - lastAmp;
+  if (amp > 0.05 && rise > 0.008 && dropTimer <= 0) {
+    addDrop(0.12 + Math.random() * 0.76, power);
+    if (amp > 0.35 && Math.random() < 0.5) addDrop(0.1 + Math.random() * 0.8, power * 0.7);
+    dropTimer = Math.max(3, 18 - Math.floor(power * 0.15));
+  }
+
+  if (amp > 0.03) {
+    let ci = Math.round(Math.random() * (N-1));
+    col_v[ci] += amp * 10 * (Math.random() > 0.5 ? 1 : -1);
+  }
+
+  lastAmp = amp;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  let r = canvas.getBoundingClientRect();
+  let xf = (e.clientX - r.left) * (W / r.width) / W;
+  addDrop(xf, 28 + Math.random() * 18);
+});
+
+let t = 0;
+
+function getWaterPts() {
+  let pts = new Float32Array(N * 2);
+  let step = W / (N - 1);
+  for (let i = 0; i < N; i++) {
+    pts[i*2]   = i * step;
+    pts[i*2+1] = waterY + col_h[i];
+  }
+  return pts;
+}
+
+function drawBg() {
+  ctx.fillStyle = '#050d18';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = 'rgba(0,60,90,0.10)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 52) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,waterY); ctx.stroke(); }
+  for (let y = 0; y < waterY; y += 52) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  let mg = ctx.createRadialGradient(W*.82, H*.16, 0, W*.82, H*.16, 130);
+  mg.addColorStop(0, 'rgba(0,180,210,0.07)');
+  mg.addColorStop(1, 'transparent');
+  ctx.fillStyle = mg;
+  ctx.fillRect(0, 0, W, waterY);
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(200,240,255,0.7)';
+  ctx.shadowBlur  = 28;
+  ctx.fillStyle   = 'rgba(220,245,255,0.88)';
+  ctx.beginPath(); ctx.arc(W*.82, H*.12, 16, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawWater(pts) {
+  let bg = ctx.createLinearGradient(0, waterY, 0, H);
+  bg.addColorStop(0,   '#071e36');
+  bg.addColorStop(0.4, '#041525');
+  bg.addColorStop(1,   '#020c1b');
+
+  function traceSurface() {
+    ctx.moveTo(0, H);
+    ctx.lineTo(pts[0], pts[1]);
+    for (let i = 1; i < N-1; i++) {
+      let mx = (pts[i*2] + pts[i*2+2]) / 2;
+      let my = (pts[i*2+1] + pts[i*2+3]) / 2;
+      ctx.quadraticCurveTo(pts[i*2], pts[i*2+1], mx, my);
+    }
+    ctx.lineTo(pts[(N-1)*2], pts[(N-1)*2+1]);
+    ctx.lineTo(W, H);
+    ctx.closePath();
+  }
+
+  ctx.beginPath(); traceSurface();
+  ctx.fillStyle = bg; ctx.fill();
+
+  ctx.save();
+  ctx.beginPath(); traceSurface(); ctx.clip();
+  for (let i = 0; i < 16; i++) {
+    let cx = (Math.sin(t*.38+i*2.3)*.5+.5)*W;
+    let cy = waterY+20+(Math.sin(t*.22+i*1.9)*.5+.5)*(H-waterY-30);
+    let r  = 14+12*Math.abs(Math.sin(t*.55+i));
+    let cg = ctx.createRadialGradient(cx,cy,0,cx,cy,r);
+    cg.addColorStop(0,'rgba(0,140,190,0.08)'); cg.addColorStop(1,'transparent');
+    ctx.fillStyle=cg; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+
+  let sg = ctx.createLinearGradient(0, waterY-14, 0, waterY+28);
+  sg.addColorStop(0,'rgba(0,160,200,0)');
+  sg.addColorStop(.45,'rgba(0,160,200,0.11)');
+  sg.addColorStop(1,'rgba(0,100,150,0)');
+  ctx.beginPath(); traceSurface();
+  ctx.fillStyle=sg; ctx.fill();
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,188,212,0.55)';
+  ctx.shadowBlur  = 10;
+  ctx.beginPath();
+  ctx.moveTo(pts[0], pts[1]);
+  for (let i = 1; i < N-1; i++) {
+    let mx=(pts[i*2]+pts[i*2+2])/2, my=(pts[i*2+1]+pts[i*2+3])/2;
+    ctx.quadraticCurveTo(pts[i*2],pts[i*2+1],mx,my);
+  }
+  ctx.lineTo(pts[(N-1)*2], pts[(N-1)*2+1]);
+  ctx.strokeStyle='rgba(0,210,240,0.6)'; ctx.lineWidth=1.8; ctx.stroke();
+  ctx.restore();
+
+  for (let i = 2; i < N-2; i++) {
+    let y=pts[i*2+1], yp=pts[(i-1)*2+1], yn=pts[(i+1)*2+1];
+    let depth = waterY - y;
+    if (y<yp && y<yn && depth>3) {
+      let a = Math.min(depth/26, 0.85);
+      ctx.save();
+      ctx.shadowColor='rgba(180,240,255,0.9)'; ctx.shadowBlur=5;
+      ctx.fillStyle=`rgba(210,248,255,${a})`;
+      ctx.beginPath(); ctx.ellipse(pts[i*2],y,2.5,1.2,0,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+function drawDrops() {
+  for (let d of drops) {
+    if (d.splashed) continue;
+    ctx.save();
+    ctx.shadowColor='rgba(0,200,240,0.8)'; ctx.shadowBlur=12;
+    ctx.fillStyle='rgba(80,210,245,0.9)';
+    ctx.beginPath(); ctx.ellipse(d.x, d.y, d.r*.5, d.r, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(0,180,220,0.25)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(d.x, d.y-d.r); ctx.lineTo(d.x, d.y-d.r-14-d.power*.4); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawParticles() {
+  for (let p of particles) {
+    ctx.save();
+    ctx.globalAlpha=p.life;
+    ctx.shadowColor=`hsla(${p.hue},100%,70%,.7)`; ctx.shadowBlur=6;
+    ctx.fillStyle=`hsla(${p.hue},85%,72%,1)`;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r*p.life, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function loop() {
+  t += 0.016;
+  processAudio();
+  stepWater();
+  updateDrops();
+  updateParticles();
+  ctx.clearRect(0, 0, W, H);
+  drawBg();
+  drawWater(getWaterPts());
+  drawDrops();
+  drawParticles();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', () => {
+  let oh = col_h ? col_h.slice() : null, ov = col_v ? col_v.slice() : null;
+  initWater();
+  if (oh) for (let i=0;i<N;i++) { let s=Math.round(i*(oh.length-1)/(N-1)); col_h[i]=oh[s]||0; col_v[i]=ov[s]||0; }
+});
+
+initWater();
+loop();
+</script>
+</body>
+</html>
