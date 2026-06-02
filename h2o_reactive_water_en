@@ -53,9 +53,14 @@ canvas{display:block;width:100%;height:100%}
 .overlay h2{font-size:.7rem;letter-spacing:.3em;text-transform:uppercase;color:var(--cyan);font-weight:700}
 .overlay p{font-size:.6rem;letter-spacing:.1em;color:var(--text);text-align:center;line-height:2.1}
 footer{
-  flex-shrink:0;height:64px;
+  flex-shrink:0;
+  height:64px;
   border-top:1px solid var(--border);
-  display:flex;align-items:center;justify-content:center;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:14px;
 }
 .mic-btn{
   font-family:'Space Mono',monospace;
@@ -103,9 +108,24 @@ footer{
 </div>
 
 <footer>
-  <button class="mic-btn" id="mic-btn" onclick="toggleMic()">
-    <span class="mic-dot"></span>► START MICROPHONE
-  </button>
+  <div style="display:flex;gap:12px;align-items:center;">
+    
+    <button class="mic-btn" id="mic-btn" onclick="toggleMic()">
+      <span class="mic-dot"></span>► START MICROPHONE
+    </button>
+
+   <button class="mic-btn" id="audio-btn"
+        onclick="toggleAudioFile()">
+    ♪ LOAD AUDIO
+    </button>
+
+    <input
+      type="file"
+      id="audio-file"
+      accept="audio/*"
+      style="display:none"
+    />
+  </div>
 </footer>
 
 <script>
@@ -209,8 +229,95 @@ function updateParticles() {
 }
 
 let audioCtx, analyser, micStream, freqData;
+let audioElement = null;
+let audioSource = null;
 let micActive = false;
+let fileAudioActive = false;
 let domFreq = 0, amp = 0, lastAmp = 0, dropTimer = 0;
+
+document.getElementById('audio-file')
+  .addEventListener('change', loadAudioFile);
+
+async function loadAudioFile(event) {
+
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+
+    if (micActive) {
+      stopMic();
+    }
+
+    if (audioElement) {
+      audioElement.pause();
+    }
+
+    const url = URL.createObjectURL(file);
+
+    audioElement = new Audio(url);
+    audioElement.loop = true;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.75;
+
+    audioSource = audioCtx.createMediaElementSource(audioElement);
+
+    audioSource.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+
+    await audioElement.play();
+
+    fileAudioActive = true;
+
+    let btn = document.getElementById('audio-btn');
+    btn.classList.add('active');
+    btn.innerHTML = '■ STOP AUDIO';
+
+    document.getElementById('overlay').classList.add('gone');
+
+  }
+  catch(err) {
+    alert('Cannot load audio file:\n' + err.message);
+  }
+}
+
+function toggleAudioFile() {
+
+  if(fileAudioActive){
+    stopFileAudio();
+    return;
+  }
+
+  document.getElementById('audio-file').click();
+}
+
+function stopFileAudio(){
+
+  if(audioElement){
+    audioElement.pause();
+    audioElement.currentTime = 0;
+    audioElement.src = "";
+    audioElement = null;
+  }
+
+  if(audioCtx && !micActive){
+    audioCtx.close();
+  }
+
+    analyser = null;
+    fileAudioActive = false;
+
+    let btn = document.getElementById('audio-btn');
+
+    btn.classList.remove('active');
+    btn.innerHTML = '♪ LOAD AUDIO';
+}
 
 async function toggleMic() {
   if (micActive) { stopMic(); return; }
@@ -234,12 +341,20 @@ async function toggleMic() {
 }
 
 function stopMic() {
-  if (micStream) micStream.getTracks().forEach(t => t.stop());
-  if (audioCtx)  audioCtx.close();
+
+  if (micStream)
+    micStream.getTracks().forEach(t => t.stop());
+
+  if (audioCtx)
+    audioCtx.close();
+
   micActive = false;
+
   let btn = document.getElementById('mic-btn');
+
   btn.classList.remove('active');
-  btn.innerHTML = '<span class="mic-dot"></span>► START MICROPHONE';
+  btn.innerHTML =
+    '<span class="mic-dot"></span>► START MICROPHONE';
 }
 
 function processAudio() {
