@@ -358,8 +358,9 @@ function stopMic() {
 }
 
 function processAudio() {
-  if (!micActive || !analyser) return;
+  if ((!micActive && !fileAudioActive) || !analyser) return;
   analyser.getByteFrequencyData(freqData);
+  
 
   let binCount = analyser.frequencyBinCount;
   let sr = audioCtx.sampleRate;
